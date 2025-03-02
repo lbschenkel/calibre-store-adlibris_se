@@ -18,6 +18,9 @@ from calibre.gui2.store.basic_config import BasicStoreConfig
 from calibre.gui2.store.search_result import SearchResult
 from calibre.gui2.store.web_store_dialog import WebStoreDialog
 
+import json
+import re
+
 if __name__ == '__main__':
     from lib import GenericStore, xpath, text
 else:
@@ -30,46 +33,49 @@ class AdlibrisStore(GenericStore):
     words_drm_unlocked = ['vattenmärkt']
 
     def find_search_results(self, doc):
-        return xpath(doc, '//*[@itemtype="https://schema.org/Book"]')
+        # This finds the *variants*, not the *books*, as each "row" may contain
+        # multiple variants with their own format/price/etc.:
+        return xpath(doc, '//*[@class="search-result__list-view__product__wrapper" and @data-isbook="True"]//*[@class="variant"]')
 
-    def find_book_details(self, doc):
-        details = self.find_search_results(doc)
-        if len(details) > 0:
-            return details[0]
-        else:
-            return details
-
-    def parse_search_result(self, node):
+    def parse_search_result(self, variant):
+        # Look at the ancestor to find the book:
+        book = xpath(variant, './ancestor::*[@class="search-result__list-view__product__wrapper" and @data-isbook="True"]')[0]
+        
         r = SearchResult()
-        r.detail_item = text(node, './/*', 'item-info', '/a/@href')
-        r.title       = text(node, './/*[@itemprop="name"]')
-        r.author      = text(node, './/*[@itemprop="author"]')
-        r.price       = text(node, './/*', 'current-price')
-        r.formats     = text(node, './/*', 'format ')
-        r.cover_url   = text(node, './/img[@itemprop="image"]', '', '/@data-original')
+        r.detail_item = text(variant, './/a[1]', None, '/@href')
+        r.price       = text(variant, './/*', 'price sek', joiner=' ')
+        r.title       = text(book, './/a', 'search-result__product__name')
+        r.author      = text(book, './/*[@itemprop="author"]')
+        r.cover_url   = text(book, './/img[@itemprop="image"]/@data-src', '', '')
         return r
 
-    def parse_book_details(self, node):
+    def find_book_details(self, variant):
+        # The book details are not in the HTML, but in a JS (JSON) variable
+        # inside a script tag.
+        scripts = xpath(variant, '//script', None, '/text()')
+        for script in scripts:
+            match = re.search('pageData = ({.+});', script)
+            if match:
+                data = json.loads(match.group(1))
+                data = data['ProductVariants'][0] # details page should always be for single variant
+                return data
+        raise Exception('Cannot find book details')
+
+    def parse_book_details(self, data):
         r = SearchResult()
-        r.title     = text(node, './/*[@itemprop="name"]')
-        r.author    = text(node, './/*[@itemprop="author"]')
-        r.price     = text(node, './/*', 'current-price')
-        r.cover_url = text(node, './/img[@itemprop="image"]', '', '/@src')
-        r.formats   = text(node, './/li[contains(., "elektroniska format:")]/*', 'product-info-panel__attributes__value', '/text()')
+        r.title     = data['Title']
+        r.author    = ' & '.join(data['Authors'])
+        r.formats   = data['ProductInfo']['EBookVersion']['Values'][0]['Value']
         r.drm       = r.formats
         return r
 
     def normalize_formats(self, text):
-        upper = text.strip().upper()
-        formats = []
-        if 'EPUB' in upper:
-            formats.append('EPUB')
-        if 'PDF' in upper:
-            formats.append('PDF')
-        if formats:
-            return ', '.join(formats)
-        else:
-            return text
+        text = text.lower()
+        if text.startswith('epub'):
+            return 'EPUB'
+        if text.startswith('pdf'):
+            return 'PDF'
+        return super().normalize_formats(text)
 
 
 def build_details(doc):
@@ -108,7 +114,7 @@ class AdlibrisStorePlugin(StorePlugin):
 if __name__ == '__main__':
     import sys
     query   = ' '.join(sys.argv[1:])
-    max     = 3
+    max     = 10
     timeout = 10
 
     store = AdlibrisStore()
