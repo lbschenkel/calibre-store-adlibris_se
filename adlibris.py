@@ -64,7 +64,7 @@ class AdlibrisStore(GenericStore):
     def parse_book_details(self, data):
         r = SearchResult()
         r.title     = data['Title']
-        r.author    = ' & '.join(data['Authors'])
+        r.author    = ' & '.join(data['Authors'] or [])
         r.formats   = data['ProductInfo']['EBookVersion']['Values'][0]['Value']
         r.drm       = r.formats
         return r
