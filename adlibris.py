@@ -71,7 +71,7 @@ class AdlibrisStore(GenericStore):
 
     def normalize_formats(self, text):
         text = text.lower()
-        if text.startswith('epub'):
+        if text.startswith('epub') or text.startswith('enhanced epub'):
             return 'EPUB'
         if text.startswith('pdf'):
             return 'PDF'
